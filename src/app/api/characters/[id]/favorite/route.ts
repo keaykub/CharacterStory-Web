@@ -1,99 +1,46 @@
 import { auth } from '@clerk/nextjs/server'
 import { createClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
-import { Database } from '@/types/database'
+import { NextRequest, NextResponse } from 'next/server'
 
-const supabase = createClient<Database>(
+const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// PATCH: Toggle favorite status
+// ✅ แก้ไข interface สำหรับ Next.js 15
+interface RouteParams {
+  params: Promise<{ id: string }>  // เปลี่ยนเป็น Promise
+}
+
 export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+  request: NextRequest,
+  context: RouteParams
+): Promise<NextResponse> {
   try {
     const { userId } = await auth()
     
     if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const characterId = params.id
-    const body = await req.json()
-    const { is_favorite } = body
-
-    if (typeof is_favorite !== 'boolean') {
-      return NextResponse.json(
-        { error: 'is_favorite must be a boolean' },
-        { status: 400 }
-      )
-    }
-
-    // หา user_id จาก clerk_id
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('clerk_id', userId)
-      .single()
-
-    if (userError || !userData) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // ตรวจสอบว่า character เป็นของ user นี้หรือไม่
-    const { data: existingCharacter, error: checkError } = await supabase
-      .from('characters')
-      .select('id, user_id, is_favorite')
-      .eq('id', characterId)
-      .eq('user_id', userData.id)
-      .single()
-
-    if (checkError || !existingCharacter) {
-      return NextResponse.json(
-        { error: 'Character not found or access denied' },
-        { status: 404 }
-      )
-    }
+    // ✅ await params
+    const { id } = await context.params
+    const { is_favorite } = await request.json()
 
     // อัพเดท favorite status
-    const { data: updatedCharacter, error: updateError } = await supabase
+    const { error } = await supabase
       .from('characters')
-      .update({ 
-        is_favorite,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', characterId)
-      .eq('user_id', userData.id)
-      .select()
-      .single()
+      .update({ is_favorite })
+      .eq('id', id)
+      .eq('user_id', userId)
 
-    if (updateError) {
-      console.error('Error updating character favorite:', updateError)
-      return NextResponse.json(
-        { error: 'Failed to update favorite status' },
-        { status: 500 }
-      )
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({
-      success: true,
-      character: updatedCharacter,
-      message: is_favorite ? 'Added to favorites' : 'Removed from favorites'
-    })
-
+    return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Error in character favorite API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    console.error('Favorite toggle error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
